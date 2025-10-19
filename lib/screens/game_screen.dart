@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/game_state.dart';
-import '../models/game_board.dart'; // Thêm import này
+import '../models/game_board.dart';
 import '../models/block_shape.dart';
 import '../widgets/game_board_widget.dart';
 import '../widgets/draggable_block_widget.dart';
@@ -24,6 +24,11 @@ class _GameScreenState extends State<GameScreen> {
   
   Offset _boardPosition = Offset.zero;
   Size _boardSize = Size.zero;
+  final List<GlobalKey> _blockKeys = List.generate(3, (index) => GlobalKey());
+  
+  // Thêm biến để lưu vị trí bắt đầu và offset
+  Offset? _dragStartGlobalPosition;
+  Offset? _floatingBlockStartPosition;
 
   @override
   void initState() {
@@ -47,15 +52,13 @@ class _GameScreenState extends State<GameScreen> {
   Offset? _globalToGridCoordinate(Offset globalPos) {
     if (_boardSize == Size.zero) return null;
 
-    // Mở rộng vùng nhận diện xung quanh board
     Rect expandedBoardRect = Rect.fromLTWH(
-      _boardPosition.dx - 50, // Mở rộng 50px về bên trái
-      _boardPosition.dy - 50, // Mở rộng 50px lên trên
-      _boardSize.width + 100,  // Mở rộng 100px tổng chiều rộng
-      _boardSize.height + 100, // Mở rộng 100px tổng chiều cao
+      _boardPosition.dx - 50,
+      _boardPosition.dy - 50,
+      _boardSize.width + 100,
+      _boardSize.height + 100,
     );
 
-    // Nếu vị trí kéo nằm trong vùng mở rộng quanh board
     if (expandedBoardRect.contains(globalPos)) {
       Offset relativePos = globalPos - _boardPosition;
 
@@ -70,7 +73,6 @@ class _GameScreenState extends State<GameScreen> {
       double col = x / (cellSize + cellMargin);
       double row = y / (cellSize + cellMargin);
 
-      // Clamp giá trị để luôn nằm trong board
       col = col.clamp(0, GameBoard.size - 1).floorToDouble();
       row = row.clamp(0, GameBoard.size - 1).floorToDouble();
 
@@ -80,35 +82,57 @@ class _GameScreenState extends State<GameScreen> {
     return null;
   }
 
-  void _handleDragStart(int blockIndex) {
+  void _handleDragStart(int blockIndex, Offset dragStartGlobalPosition) {
     final gameState = Provider.of<GameState>(context, listen: false);
     final block = gameState.currentBlocks[blockIndex];
     
     if (block == null) return;
     
+    // Lấy vị trí global của block widget
+    final RenderBox? blockRenderBox = _blockKeys[blockIndex].currentContext?.findRenderObject() as RenderBox?;
+    if (blockRenderBox == null) return;
+    
+    final blockGlobalPosition = blockRenderBox.localToGlobal(Offset.zero);
+    final blockSize = blockRenderBox.size;
+    
+    // Tính vị trí bắt đầu:
+    // - x: giữa khối trong block section (cùng cột)
+    // - y: cạnh dưới của board
+    double startX = blockGlobalPosition.dx + blockSize.width / 2;
+    double startY = _boardPosition.dy + _boardSize.height;
+
     setState(() {
       _draggingBlock = block;
       _draggingBlockIndex = blockIndex;
-      _draggingPosition = null;
+      _floatingBlockStartPosition = Offset(startX, startY);
+      _dragStartGlobalPosition = dragStartGlobalPosition;
+      _draggingPosition = _floatingBlockStartPosition;
       _previewPosition = null;
     });
   }
 
-  void _handleDragUpdate(int blockIndex, Offset currentPosition) {
-    if (_draggingBlock == null) return;
+  void _handleDragUpdate(int blockIndex, Offset currentGlobalPosition) {
+    if (_draggingBlock == null || 
+        _floatingBlockStartPosition == null || 
+        _dragStartGlobalPosition == null) return;
+
+    // Tính toán sự dịch chuyển từ vị trí bắt đầu
+    Offset dragDelta = currentGlobalPosition - _dragStartGlobalPosition!;
+    
+    // Vị trí mới = vị trí bắt đầu của floating block + độ dịch chuyển
+    Offset newFloatingPosition = _floatingBlockStartPosition! + dragDelta;
 
     setState(() {
-      _draggingPosition = currentPosition;
+      _draggingPosition = newFloatingPosition;
       
-      Offset? gridPos = _globalToGridCoordinate(currentPosition);
+      Offset? gridPos = _globalToGridCoordinate(newFloatingPosition);
       if (gridPos != null) {
         final gameState = Provider.of<GameState>(context, listen: false);
         int row = gridPos.dy.toInt();
         int col = gridPos.dx.toInt();
         
-        // Tự động tìm vị trí hợp lệ gần nhất nếu vị trí hiện tại không đặt được
+        // Tìm vị trí hợp lệ gần nhất
         if (!gameState.canPlaceBlock(_draggingBlock!, row, col)) {
-          // Thử các vị trí lân cận
           for (int r = row - 1; r <= row + 1; r++) {
             for (int c = col - 1; c <= col + 1; c++) {
               if (r >= 0 && r < GameBoard.size && c >= 0 && c < GameBoard.size) {
@@ -160,6 +184,8 @@ class _GameScreenState extends State<GameScreen> {
       _draggingBlockIndex = null;
       _draggingPosition = null;
       _previewPosition = null;
+      _dragStartGlobalPosition = null;
+      _floatingBlockStartPosition = null;
     });
   }
 
@@ -356,20 +382,36 @@ class _GameScreenState extends State<GameScreen> {
             ),
           ),
           SizedBox(height: 12),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-            children: [
-              for (int i = 0; i < 3; i++)
-                DraggableBlockWidget(
-                  key: ValueKey('block-$i-${gameState.currentBlocks[i]?.name ?? "empty"}'),
-                  block: gameState.currentBlocks[i],
-                  blockIndex: i,
-                  onDragStart: () => _handleDragStart(i),
-                  onDragUpdate: _handleDragUpdate,
-                  onDragComplete: _handleDragComplete,
-                  onDragCancel: _handleDragCancel,
-                ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              // Tính toán kích thước động dựa trên chiều rộng khả dụng
+              double availableWidth = constraints.maxWidth;
+              double blockSize = (availableWidth - 40) / 3; // Trừ đi khoảng cách giữa các block
+              
+              // Giới hạn kích thước block trong khoảng hợp lý
+              blockSize = blockSize.clamp(80.0, 120.0);
+              
+              return Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  for (int i = 0; i < 3; i++)
+                    Container(
+                      key: _blockKeys[i],
+                      width: blockSize,
+                      height: blockSize,
+                      child: DraggableBlockWidget(
+                        key: ValueKey('block-$i-${gameState.currentBlocks[i]?.name ?? "empty"}'),
+                        block: gameState.currentBlocks[i],
+                        blockIndex: i,
+                        onDragStart: _handleDragStart,
+                        onDragUpdate: _handleDragUpdate,
+                        onDragComplete: _handleDragComplete,
+                        onDragCancel: _handleDragCancel,
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),

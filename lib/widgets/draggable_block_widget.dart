@@ -5,18 +5,18 @@ import 'block_preview_widget.dart';
 class DraggableBlockWidget extends StatefulWidget {
   final BlockShape? block;
   final int blockIndex;
-  final Function(int blockIndex, Offset dragStart, Offset dragEnd) onDragComplete;
+  final Function(int, Offset) onDragStart; // Thêm Offset parameter
   final Function(int blockIndex, Offset currentPosition) onDragUpdate;
-  final VoidCallback onDragStart;
+  final Function(int blockIndex, Offset dragStart, Offset dragEnd) onDragComplete;
   final VoidCallback onDragCancel;
 
   const DraggableBlockWidget({
     Key? key,
     required this.block,
     required this.blockIndex,
-    required this.onDragComplete,
-    required this.onDragUpdate,
     required this.onDragStart,
+    required this.onDragUpdate,
+    required this.onDragComplete,
     required this.onDragCancel,
   }) : super(key: key);
 
@@ -37,10 +37,10 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
   void initState() {
     super.initState();
     _scaleController = AnimationController(
-      duration: Duration(milliseconds: 150), // Giảm thời gian animation
+      duration: Duration(milliseconds: 150),
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.1).animate( // Giảm scale để nhanh hơn
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.1).animate(
       CurvedAnimation(parent: _scaleController, curve: Curves.easeOut),
     );
   }
@@ -73,7 +73,8 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     });
     
     _scaleController.forward();
-    widget.onDragStart();
+    // Truyền cả blockIndex và vị trí bắt đầu của drag
+    widget.onDragStart(widget.blockIndex, details.globalPosition);
   }
 
   void _handleDragUpdate(DragUpdateDetails details) {
@@ -81,7 +82,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     
     _lastDragPosition = details.globalPosition;
     
-    // Gửi vị trí cập nhật ngay lập tức
     widget.onDragUpdate(widget.blockIndex, details.globalPosition);
   }
 
@@ -119,6 +119,7 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     }
 
     return GestureDetector(
+      behavior: HitTestBehavior.opaque,
       onPanStart: _handleDragStart,
       onPanUpdate: _handleDragUpdate,
       onPanEnd: _handleDragEnd,
@@ -129,7 +130,7 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
           return Transform.scale(
             scale: _scaleAnimation.value,
             child: Opacity(
-              opacity: _isDragging ? 0.5 : 1.0,
+              opacity: _isDragging ? 0.3 : 1.0,
               child: Container(
                 decoration: BoxDecoration(
                   borderRadius: BorderRadius.circular(16),
@@ -143,10 +144,12 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
                         ]
                       : null,
                 ),
-                child: BlockPreviewWidget(
-                  block: widget.block,
-                  cellSize: 30,
-                  showShadow: true,
+                child: Center(
+                  child: BlockPreviewWidget(
+                    block: widget.block,
+                    cellSize: 25,
+                    showShadow: true,
+                  ),
                 ),
               ),
             ),
@@ -158,8 +161,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
 
   Widget _buildEmptySlot() {
     return Container(
-      width: 120,
-      height: 120,
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(16),
         color: Colors.grey.withOpacity(0.1),
@@ -172,7 +173,7 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
         child: Icon(
           Icons.check_circle_outline,
           color: Colors.green.withOpacity(0.5),
-          size: 40,
+          size: 30,
         ),
       ),
     );
