@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/game_state.dart';
+import '../models/game_board.dart'; // Thêm import này
 import '../models/block_shape.dart';
 import '../widgets/game_board_widget.dart';
 import '../widgets/draggable_block_widget.dart';
@@ -40,42 +41,50 @@ class _GameScreenState extends State<GameScreen> {
         _boardPosition = renderBox.localToGlobal(Offset.zero);
         _boardSize = renderBox.size;
       });
-      print('📍 Board position: $_boardPosition, size: $_boardSize');
     }
   }
 
   Offset? _globalToGridCoordinate(Offset globalPos) {
     if (_boardSize == Size.zero) return null;
 
-    Offset relativePos = globalPos - _boardPosition;
+    // Mở rộng vùng nhận diện xung quanh board
+    Rect expandedBoardRect = Rect.fromLTWH(
+      _boardPosition.dx - 50, // Mở rộng 50px về bên trái
+      _boardPosition.dy - 50, // Mở rộng 50px lên trên
+      _boardSize.width + 100,  // Mở rộng 100px tổng chiều rộng
+      _boardSize.height + 100, // Mở rộng 100px tổng chiều cao
+    );
 
-    const double boardPadding = 12;
-    const double innerPadding = 8;
-    const double cellSize = 42;
-    const double cellMargin = 1;
+    // Nếu vị trí kéo nằm trong vùng mở rộng quanh board
+    if (expandedBoardRect.contains(globalPos)) {
+      Offset relativePos = globalPos - _boardPosition;
 
-    double x = relativePos.dx - boardPadding - innerPadding;
-    double y = relativePos.dy - boardPadding - innerPadding;
+      const double boardPadding = 12;
+      const double innerPadding = 8;
+      const double cellSize = 42;
+      const double cellMargin = 1;
 
-    double col = x / (cellSize + cellMargin);
-    double row = y / (cellSize + cellMargin);
+      double x = relativePos.dx - boardPadding - innerPadding;
+      double y = relativePos.dy - boardPadding - innerPadding;
 
-    if (row < 0 || row >= 8 || col < 0 || col >= 8) {
-      return null;
+      double col = x / (cellSize + cellMargin);
+      double row = y / (cellSize + cellMargin);
+
+      // Clamp giá trị để luôn nằm trong board
+      col = col.clamp(0, GameBoard.size - 1).floorToDouble();
+      row = row.clamp(0, GameBoard.size - 1).floorToDouble();
+
+      return Offset(col, row);
     }
 
-    return Offset(col.floorToDouble(), row.floorToDouble());
+    return null;
   }
 
   void _handleDragStart(int blockIndex) {
-    print('🎯 Drag start - block $blockIndex');
     final gameState = Provider.of<GameState>(context, listen: false);
     final block = gameState.currentBlocks[blockIndex];
     
-    if (block == null) {
-      print('❌ Block is null');
-      return;
-    }
+    if (block == null) return;
     
     setState(() {
       _draggingBlock = block;
@@ -83,7 +92,6 @@ class _GameScreenState extends State<GameScreen> {
       _draggingPosition = null;
       _previewPosition = null;
     });
-    print('✅ Started dragging: ${block.name}');
   }
 
   void _handleDragUpdate(int blockIndex, Offset currentPosition) {
@@ -98,10 +106,22 @@ class _GameScreenState extends State<GameScreen> {
         int row = gridPos.dy.toInt();
         int col = gridPos.dx.toInt();
         
-        if (gameState.canPlaceBlock(_draggingBlock!, row, col)) {
-          _previewPosition = Offset(col.toDouble(), row.toDouble());
-        } else {
+        // Tự động tìm vị trí hợp lệ gần nhất nếu vị trí hiện tại không đặt được
+        if (!gameState.canPlaceBlock(_draggingBlock!, row, col)) {
+          // Thử các vị trí lân cận
+          for (int r = row - 1; r <= row + 1; r++) {
+            for (int c = col - 1; c <= col + 1; c++) {
+              if (r >= 0 && r < GameBoard.size && c >= 0 && c < GameBoard.size) {
+                if (gameState.canPlaceBlock(_draggingBlock!, r, c)) {
+                  _previewPosition = Offset(c.toDouble(), r.toDouble());
+                  return;
+                }
+              }
+            }
+          }
           _previewPosition = null;
+        } else {
+          _previewPosition = Offset(col.toDouble(), row.toDouble());
         }
       } else {
         _previewPosition = null;
@@ -110,41 +130,27 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _handleDragComplete(int blockIndex, Offset dragStart, Offset dragEnd) {
-    print('\n=== Drag Complete ===');
-    print('Block index: $blockIndex');
-    print('Preview position: $_previewPosition');
-
     if (_previewPosition != null && _draggingBlockIndex != null) {
       int row = _previewPosition!.dy.toInt();
       int col = _previewPosition!.dx.toInt();
-      
-      print('📍 Placing at: ($row, $col)');
       
       final gameState = Provider.of<GameState>(context, listen: false);
       bool success = gameState.placeBlock(_draggingBlockIndex!, row, col);
       
       if (success) {
-        print('✅ Placed successfully');
         _showMessage('✓ Block placed!', isError: false);
-        
-        // Force rebuild
-        setState(() {});
-        
         _checkGameOver(gameState);
       } else {
-        print('❌ Failed to place');
         _showMessage('Failed to place block!', isError: true);
       }
     } else {
-      print('❌ No valid preview position');
-      _showMessage('❌ Drag block over the board!', isError: true);
+      _showMessage('❌ Drag block near the board!', isError: true);
     }
 
     _resetDragState();
   }
 
   void _handleDragCancel() {
-    print('🎯 Drag cancelled');
     _resetDragState();
   }
 

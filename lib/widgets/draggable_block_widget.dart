@@ -37,10 +37,10 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
   void initState() {
     super.initState();
     _scaleController = AnimationController(
-      duration: Duration(milliseconds: 200),
+      duration: Duration(milliseconds: 150), // Giảm thời gian animation
       vsync: this,
     );
-    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.15).animate(
+    _scaleAnimation = Tween<double>(begin: 1.0, end: 1.1).animate( // Giảm scale để nhanh hơn
       CurvedAnimation(parent: _scaleController, curve: Curves.easeOut),
     );
   }
@@ -48,9 +48,7 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
   @override
   void didUpdateWidget(DraggableBlockWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // Reset state khi block thay đổi
     if (oldWidget.block != widget.block) {
-      print('🔄 Block changed at index ${widget.blockIndex}: ${oldWidget.block?.name ?? "null"} -> ${widget.block?.name ?? "null"}');
       setState(() {
         _isDragging = false;
         _dragStartPosition = null;
@@ -76,8 +74,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     
     _scaleController.forward();
     widget.onDragStart();
-    
-    print('🎯 Drag started at: ${details.globalPosition}');
   }
 
   void _handleDragUpdate(DragUpdateDetails details) {
@@ -85,6 +81,7 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     
     _lastDragPosition = details.globalPosition;
     
+    // Gửi vị trí cập nhật ngay lập tức
     widget.onDragUpdate(widget.blockIndex, details.globalPosition);
   }
 
@@ -92,8 +89,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
     if (widget.block == null || _dragStartPosition == null) return;
 
     final startPos = _dragStartPosition!;
-    
-    print('🎯 Drag ended');
     
     widget.onDragComplete(widget.blockIndex, startPos, _lastDragPosition ?? startPos);
     
@@ -107,8 +102,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
   }
 
   void _handleDragCancel() {
-    print('🎯 Drag cancelled');
-    
     setState(() {
       _isDragging = false;
       _dragStartPosition = null;
@@ -121,7 +114,6 @@ class _DraggableBlockWidgetState extends State<DraggableBlockWidget>
 
   @override
   Widget build(BuildContext context) {
-    // QUAN TRỌNG: Kiểm tra block null và hiển thị slot trống
     if (widget.block == null) {
       return _buildEmptySlot();
     }

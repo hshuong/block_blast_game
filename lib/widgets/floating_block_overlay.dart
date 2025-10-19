@@ -25,13 +25,13 @@ class FloatingBlockOverlay extends StatelessWidget {
       top: position.dy - (blockHeight / 2),
       child: IgnorePointer(
         child: Opacity(
-          opacity: 0.85,
+          opacity: 0.9,
           child: Container(
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(8),
               boxShadow: [
                 BoxShadow(
-                  color: block.color.withOpacity(0.6),
+                  color: block.color.withOpacity(0.8),
                   blurRadius: 25,
                   spreadRadius: 5,
                 ),
