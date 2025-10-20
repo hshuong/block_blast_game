@@ -6,6 +6,7 @@ import '../models/block_shape.dart';
 import '../widgets/game_board_widget.dart';
 import '../widgets/draggable_block_widget.dart';
 import '../widgets/floating_block_overlay.dart';
+import 'dart:math' as math;
 
 class GameScreen extends StatefulWidget {
   const GameScreen({Key? key}) : super(key: key);
@@ -19,14 +20,13 @@ class _GameScreenState extends State<GameScreen> {
   int? _draggingBlockIndex;
   Offset? _draggingPosition;
   Offset? _previewPosition;
-  
+
   final GlobalKey _boardKey = GlobalKey();
-  
+
   Offset _boardPosition = Offset.zero;
   Size _boardSize = Size.zero;
   final List<GlobalKey> _blockKeys = List.generate(3, (index) => GlobalKey());
-  
-  // Thêm biến để lưu vị trí bắt đầu và offset
+
   Offset? _dragStartGlobalPosition;
   Offset? _floatingBlockStartPosition;
 
@@ -85,19 +85,16 @@ class _GameScreenState extends State<GameScreen> {
   void _handleDragStart(int blockIndex, Offset dragStartGlobalPosition) {
     final gameState = Provider.of<GameState>(context, listen: false);
     final block = gameState.currentBlocks[blockIndex];
-    
+
     if (block == null) return;
-    
-    // Lấy vị trí global của block widget
-    final RenderBox? blockRenderBox = _blockKeys[blockIndex].currentContext?.findRenderObject() as RenderBox?;
+
+    final RenderBox? blockRenderBox =
+        _blockKeys[blockIndex].currentContext?.findRenderObject() as RenderBox?;
     if (blockRenderBox == null) return;
-    
+
     final blockGlobalPosition = blockRenderBox.localToGlobal(Offset.zero);
     final blockSize = blockRenderBox.size;
-    
-    // Tính vị trí bắt đầu:
-    // - x: giữa khối trong block section (cùng cột)
-    // - y: cạnh dưới của board
+
     double startX = blockGlobalPosition.dx + blockSize.width / 2;
     double startY = _boardPosition.dy + _boardSize.height;
 
@@ -112,55 +109,160 @@ class _GameScreenState extends State<GameScreen> {
   }
 
   void _handleDragUpdate(int blockIndex, Offset currentGlobalPosition) {
-    if (_draggingBlock == null || 
-        _floatingBlockStartPosition == null || 
-        _dragStartGlobalPosition == null) return;
+    if (_draggingBlock == null ||
+        _floatingBlockStartPosition == null ||
+        _dragStartGlobalPosition == null)
+      return;
 
-    // Tính toán sự dịch chuyển từ vị trí bắt đầu
     Offset dragDelta = currentGlobalPosition - _dragStartGlobalPosition!;
-    
-    // Vị trí mới = vị trí bắt đầu của floating block + độ dịch chuyển
     Offset newFloatingPosition = _floatingBlockStartPosition! + dragDelta;
 
     setState(() {
       _draggingPosition = newFloatingPosition;
-      
+
       Offset? gridPos = _globalToGridCoordinate(newFloatingPosition);
       if (gridPos != null) {
         final gameState = Provider.of<GameState>(context, listen: false);
         int row = gridPos.dy.toInt();
         int col = gridPos.dx.toInt();
-        
-        // Tìm vị trí hợp lệ gần nhất
-        if (!gameState.canPlaceBlock(_draggingBlock!, row, col)) {
-          for (int r = row - 1; r <= row + 1; r++) {
-            for (int c = col - 1; c <= col + 1; c++) {
-              if (r >= 0 && r < GameBoard.size && c >= 0 && c < GameBoard.size) {
-                if (gameState.canPlaceBlock(_draggingBlock!, r, c)) {
-                  _previewPosition = Offset(c.toDouble(), r.toDouble());
-                  return;
-                }
-              }
-            }
-          }
-          _previewPosition = null;
-        } else {
-          _previewPosition = Offset(col.toDouble(), row.toDouble());
-        }
+
+        Offset? validPosition = _findValidPositionByDragDirection(
+          gameState,
+          row,
+          col,
+          dragDelta,
+        );
+
+        _previewPosition = validPosition;
       } else {
         _previewPosition = null;
       }
     });
   }
 
+  Offset? _findValidPositionByDragDirection(
+    GameState gameState,
+    int row,
+    int col,
+    Offset dragDelta,
+  ) {
+    if (gameState.canPlaceBlock(_draggingBlock!, row, col)) {
+      return Offset(col.toDouble(), row.toDouble());
+    }
+
+    double angle = math.atan2(dragDelta.dy, dragDelta.dx);
+    List<Offset> searchDirections = _getSearchDirectionsByAngle(angle);
+
+    for (Offset direction in searchDirections) {
+      for (int distance = 1; distance <= 3; distance++) {
+        int newRow = row + (direction.dy * distance).toInt();
+        int newCol = col + (direction.dx * distance).toInt();
+
+        if (newRow >= 0 &&
+            newRow < GameBoard.size &&
+            newCol >= 0 &&
+            newCol < GameBoard.size) {
+          if (gameState.canPlaceBlock(_draggingBlock!, newRow, newCol)) {
+            return Offset(newCol.toDouble(), newRow.toDouble());
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  List<Offset> _getSearchDirectionsByAngle(double angleInRadians) {
+    double degrees = (angleInRadians * 180 / math.pi) % 360;
+    if (degrees < 0) degrees += 360;
+
+    List<Offset> directions = [];
+
+    if (degrees >= 337.5 || degrees < 22.5) {
+      // East (phải)
+      directions = [
+        Offset(1, 0),
+        Offset(1, 1),
+        Offset(1, -1),
+        Offset(0, 1),
+        Offset(0, -1),
+      ];
+    } else if (degrees >= 22.5 && degrees < 67.5) {
+      // Southeast
+      directions = [
+        Offset(1, 1),
+        Offset(1, 0),
+        Offset(0, 1),
+        Offset(1, -1),
+        Offset(-1, 1),
+      ];
+    } else if (degrees >= 67.5 && degrees < 112.5) {
+      // South (dưới)
+      directions = [
+        Offset(0, 1),
+        Offset(1, 1),
+        Offset(-1, 1),
+        Offset(1, 0),
+        Offset(-1, 0),
+      ];
+    } else if (degrees >= 112.5 && degrees < 157.5) {
+      // Southwest
+      directions = [
+        Offset(-1, 1),
+        Offset(-1, 0),
+        Offset(0, 1),
+        Offset(-1, -1),
+        Offset(1, 1),
+      ];
+    } else if (degrees >= 157.5 && degrees < 202.5) {
+      // West (trái)
+      directions = [
+        Offset(-1, 0),
+        Offset(-1, 1),
+        Offset(-1, -1),
+        Offset(0, 1),
+        Offset(0, -1),
+      ];
+    } else if (degrees >= 202.5 && degrees < 247.5) {
+      // Northwest
+      directions = [
+        Offset(-1, -1),
+        Offset(-1, 0),
+        Offset(0, -1),
+        Offset(-1, 1),
+        Offset(1, -1),
+      ];
+    } else if (degrees >= 247.5 && degrees < 292.5) {
+      // North (trên)
+      directions = [
+        Offset(0, -1),
+        Offset(-1, -1),
+        Offset(1, -1),
+        Offset(-1, 0),
+        Offset(1, 0),
+      ];
+    } else {
+      // Northeast
+      directions = [
+        Offset(1, -1),
+        Offset(1, 0),
+        Offset(0, -1),
+        Offset(1, 1),
+        Offset(-1, -1),
+      ];
+    }
+
+    return directions;
+  }
+
   void _handleDragComplete(int blockIndex, Offset dragStart, Offset dragEnd) {
     if (_previewPosition != null && _draggingBlockIndex != null) {
       int row = _previewPosition!.dy.toInt();
       int col = _previewPosition!.dx.toInt();
-      
+
       final gameState = Provider.of<GameState>(context, listen: false);
       bool success = gameState.placeBlock(_draggingBlockIndex!, row, col);
-      
+
       if (success) {
         _showMessage('✓ Block placed!', isError: false);
         _checkGameOver(gameState);
@@ -168,7 +270,7 @@ class _GameScreenState extends State<GameScreen> {
         _showMessage('Failed to place block!', isError: true);
       }
     } else {
-      _showMessage('❌ Drag block near the board!', isError: true);
+      _showMessage('✖ Drag block near the board!', isError: true);
     }
 
     _resetDragState();
@@ -201,26 +303,21 @@ class _GameScreenState extends State<GameScreen> {
 
   void _showMessage(String message, {required bool isError}) {
     if (!mounted) return;
-    
+
     ScaffoldMessenger.of(context).clearSnackBars();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           message,
-          style: TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 16,
-          ),
+          style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
         ),
         duration: Duration(milliseconds: isError ? 1000 : 600),
-        backgroundColor: isError 
-            ? Colors.red.withOpacity(0.9) 
+        backgroundColor: isError
+            ? Colors.red.withOpacity(0.9)
             : Colors.green.withOpacity(0.9),
         behavior: SnackBarBehavior.floating,
         margin: EdgeInsets.all(20),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(10),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
     );
   }
@@ -233,11 +330,7 @@ class _GameScreenState extends State<GameScreen> {
           gradient: LinearGradient(
             begin: Alignment.topCenter,
             end: Alignment.bottomCenter,
-            colors: [
-              Color(0xFF0F2027),
-              Color(0xFF203A43),
-              Color(0xFF2C5364),
-            ],
+            colors: [Color(0xFF0F2027), Color(0xFF203A43), Color(0xFF2C5364)],
           ),
         ),
         child: SafeArea(
@@ -384,13 +477,10 @@ class _GameScreenState extends State<GameScreen> {
           SizedBox(height: 12),
           LayoutBuilder(
             builder: (context, constraints) {
-              // Tính toán kích thước động dựa trên chiều rộng khả dụng
               double availableWidth = constraints.maxWidth;
-              double blockSize = (availableWidth - 40) / 3; // Trừ đi khoảng cách giữa các block
-              
-              // Giới hạn kích thước block trong khoảng hợp lý
+              double blockSize = (availableWidth - 40) / 3;
               blockSize = blockSize.clamp(80.0, 120.0);
-              
+
               return Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
@@ -400,7 +490,9 @@ class _GameScreenState extends State<GameScreen> {
                       width: blockSize,
                       height: blockSize,
                       child: DraggableBlockWidget(
-                        key: ValueKey('block-$i-${gameState.currentBlocks[i]?.name ?? "empty"}'),
+                        key: ValueKey(
+                          'block-$i-${gameState.currentBlocks[i]?.name ?? "empty"}',
+                        ),
                         block: gameState.currentBlocks[i],
                         blockIndex: i,
                         onDragStart: _handleDragStart,
@@ -423,9 +515,7 @@ class _GameScreenState extends State<GameScreen> {
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         backgroundColor: Color(0xFF2C3E50),
         title: Text(
           'GAME OVER',
@@ -439,18 +529,11 @@ class _GameScreenState extends State<GameScreen> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(
-              Icons.emoji_events,
-              color: Colors.amber,
-              size: 80,
-            ),
+            Icon(Icons.emoji_events, color: Colors.amber, size: 80),
             SizedBox(height: 20),
             Text(
               'Your Score',
-              style: TextStyle(
-                color: Colors.white70,
-                fontSize: 18,
-              ),
+              style: TextStyle(color: Colors.white70, fontSize: 18),
             ),
             SizedBox(height: 8),
             Text(
@@ -515,9 +598,7 @@ class _GameScreenState extends State<GameScreen> {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         backgroundColor: Color(0xFF2C3E50),
         title: Text(
           'Reset Game?',
@@ -529,20 +610,14 @@ class _GameScreenState extends State<GameScreen> {
         ),
         content: Text(
           'Your current progress will be lost.\nScore: ${gameState.score}',
-          style: TextStyle(
-            color: Colors.white70,
-            fontSize: 16,
-          ),
+          style: TextStyle(color: Colors.white70, fontSize: 16),
         ),
         actions: [
           TextButton(
             onPressed: () {
               Navigator.of(context).pop();
             },
-            child: Text(
-              'CANCEL',
-              style: TextStyle(color: Colors.white70),
-            ),
+            child: Text('CANCEL', style: TextStyle(color: Colors.white70)),
           ),
           ElevatedButton(
             onPressed: () {
@@ -556,10 +631,7 @@ class _GameScreenState extends State<GameScreen> {
                 borderRadius: BorderRadius.circular(12),
               ),
             ),
-            child: Text(
-              'RESET',
-              style: TextStyle(color: Colors.white),
-            ),
+            child: Text('RESET', style: TextStyle(color: Colors.white)),
           ),
         ],
       ),
