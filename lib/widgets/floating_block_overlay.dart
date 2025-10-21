@@ -19,7 +19,7 @@ class FloatingBlockOverlay extends StatelessWidget {
   Widget build(BuildContext context) {
     double blockWidth = block.width * (cellSize + 2);
     double blockHeight = block.height * (cellSize + 2);
-    
+
     return Positioned(
       left: position.dx - (blockWidth / 2),
       top: position.dy - (blockHeight / 2),

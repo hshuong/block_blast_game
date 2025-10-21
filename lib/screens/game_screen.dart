@@ -6,7 +6,6 @@ import '../models/block_shape.dart';
 import '../widgets/game_board_widget.dart';
 import '../widgets/draggable_block_widget.dart';
 import '../widgets/floating_block_overlay.dart';
-import 'dart:math' as math;
 
 class GameScreen extends StatefulWidget {
   const GameScreen({Key? key}) : super(key: key);
@@ -49,37 +48,91 @@ class _GameScreenState extends State<GameScreen> {
     }
   }
 
-  Offset? _globalToGridCoordinate(Offset globalPos) {
-    if (_boardSize == Size.zero) return null;
+  // Tìm vị trí preview gần nhất theo phong cách Block Blast
+  Offset? _findNearestValidPosition(Offset floatingCenter) {
+    if (_draggingBlock == null) return null;
 
-    Rect expandedBoardRect = Rect.fromLTWH(
-      _boardPosition.dx - 50,
-      _boardPosition.dy - 50,
-      _boardSize.width + 100,
-      _boardSize.height + 100,
+    final gameState = Provider.of<GameState>(context, listen: false);
+
+    // Tính vị trí grid tương ứng với floating center
+    const double cellSize = 42;
+    const double cellMargin = 1;
+    const double boardPadding = 12;
+    const double innerPadding = 8;
+
+    // Convert floating center to grid coordinates
+    Offset relativePos = floatingCenter - _boardPosition;
+    double x = relativePos.dx - boardPadding - innerPadding;
+    double y = relativePos.dy - boardPadding - innerPadding;
+
+    // Tính cell center mà floating đang hover
+    int centerCol = (x / (cellSize + cellMargin)).round().clamp(
+      0,
+      GameBoard.size - 1,
+    );
+    int centerRow = (y / (cellSize + cellMargin)).round().clamp(
+      0,
+      GameBoard.size - 1,
     );
 
-    if (expandedBoardRect.contains(globalPos)) {
-      Offset relativePos = globalPos - _boardPosition;
+    // Tính top-left position để đặt block sao cho center block trùng với hover cell
+    int blockCenterRow = _draggingBlock!.height ~/ 2;
+    int blockCenterCol = _draggingBlock!.width ~/ 2;
 
-      const double boardPadding = 12;
-      const double innerPadding = 8;
-      const double cellSize = 42;
-      const double cellMargin = 1;
+    int targetRow = centerRow - blockCenterRow;
+    int targetCol = centerCol - blockCenterCol;
 
-      double x = relativePos.dx - boardPadding - innerPadding;
-      double y = relativePos.dy - boardPadding - innerPadding;
+    // Clamp to valid board range
+    targetRow = targetRow.clamp(0, GameBoard.size - _draggingBlock!.height);
+    targetCol = targetCol.clamp(0, GameBoard.size - _draggingBlock!.width);
 
-      double col = x / (cellSize + cellMargin);
-      double row = y / (cellSize + cellMargin);
+    // Kiểm tra xem có thể đặt tại vị trí này không
+    if (gameState.canPlaceBlock(_draggingBlock!, targetRow, targetCol)) {
+      return Offset(targetCol.toDouble(), targetRow.toDouble());
+    }
 
-      col = col.clamp(0, GameBoard.size - 1).floorToDouble();
-      row = row.clamp(0, GameBoard.size - 1).floorToDouble();
+    // Nếu không thể đặt tại vị trí này, tìm vị trí gần nhất trong bán kính nhỏ
+    List<MapEntry<Offset, double>> validPositions = [];
 
-      return Offset(col, row);
+    for (int row = 0; row <= GameBoard.size - _draggingBlock!.height; row++) {
+      for (int col = 0; col <= GameBoard.size - _draggingBlock!.width; col++) {
+        if (gameState.canPlaceBlock(_draggingBlock!, row, col)) {
+          // Tính khoảng cách từ target position
+          double distance = ((row - targetRow).abs() + (col - targetCol).abs())
+              .toDouble();
+          validPositions.add(
+            MapEntry(Offset(col.toDouble(), row.toDouble()), distance),
+          );
+        }
+      }
+    }
+
+    if (validPositions.isEmpty) return null;
+
+    // Sắp xếp theo khoảng cách
+    validPositions.sort((a, b) => a.value.compareTo(b.value));
+
+    // Chỉ trả về nếu vị trí gần nhất không quá xa (trong bán kính 3 ô)
+    if (validPositions.first.value <= 3) {
+      return validPositions.first.key;
     }
 
     return null;
+  }
+
+  // Kiểm tra xem floating có đang ở trên/gần board không
+  bool _isNearBoard(Offset floatingCenter) {
+    if (_boardSize == Size.zero) return false;
+
+    // Mở rộng vùng board một chút để detect sớm hơn
+    Rect expandedBoardRect = Rect.fromLTWH(
+      _boardPosition.dx - 60,
+      _boardPosition.dy - 60,
+      _boardSize.width + 120,
+      _boardSize.height + 120,
+    );
+
+    return expandedBoardRect.contains(floatingCenter);
   }
 
   void _handleDragStart(int blockIndex, Offset dragStartGlobalPosition) {
@@ -120,139 +173,13 @@ class _GameScreenState extends State<GameScreen> {
     setState(() {
       _draggingPosition = newFloatingPosition;
 
-      Offset? gridPos = _globalToGridCoordinate(newFloatingPosition);
-      if (gridPos != null) {
-        final gameState = Provider.of<GameState>(context, listen: false);
-        int row = gridPos.dy.toInt();
-        int col = gridPos.dx.toInt();
-
-        Offset? validPosition = _findValidPositionByDragDirection(
-          gameState,
-          row,
-          col,
-          dragDelta,
-        );
-
-        _previewPosition = validPosition;
+      // Phong cách Block Blast: Hiển thị preview ngay khi gần board
+      if (_isNearBoard(newFloatingPosition)) {
+        _previewPosition = _findNearestValidPosition(newFloatingPosition);
       } else {
         _previewPosition = null;
       }
     });
-  }
-
-  Offset? _findValidPositionByDragDirection(
-    GameState gameState,
-    int row,
-    int col,
-    Offset dragDelta,
-  ) {
-    if (gameState.canPlaceBlock(_draggingBlock!, row, col)) {
-      return Offset(col.toDouble(), row.toDouble());
-    }
-
-    double angle = math.atan2(dragDelta.dy, dragDelta.dx);
-    List<Offset> searchDirections = _getSearchDirectionsByAngle(angle);
-
-    for (Offset direction in searchDirections) {
-      for (int distance = 1; distance <= 3; distance++) {
-        int newRow = row + (direction.dy * distance).toInt();
-        int newCol = col + (direction.dx * distance).toInt();
-
-        if (newRow >= 0 &&
-            newRow < GameBoard.size &&
-            newCol >= 0 &&
-            newCol < GameBoard.size) {
-          if (gameState.canPlaceBlock(_draggingBlock!, newRow, newCol)) {
-            return Offset(newCol.toDouble(), newRow.toDouble());
-          }
-        }
-      }
-    }
-
-    return null;
-  }
-
-  List<Offset> _getSearchDirectionsByAngle(double angleInRadians) {
-    double degrees = (angleInRadians * 180 / math.pi) % 360;
-    if (degrees < 0) degrees += 360;
-
-    List<Offset> directions = [];
-
-    if (degrees >= 337.5 || degrees < 22.5) {
-      // East (phải)
-      directions = [
-        Offset(1, 0),
-        Offset(1, 1),
-        Offset(1, -1),
-        Offset(0, 1),
-        Offset(0, -1),
-      ];
-    } else if (degrees >= 22.5 && degrees < 67.5) {
-      // Southeast
-      directions = [
-        Offset(1, 1),
-        Offset(1, 0),
-        Offset(0, 1),
-        Offset(1, -1),
-        Offset(-1, 1),
-      ];
-    } else if (degrees >= 67.5 && degrees < 112.5) {
-      // South (dưới)
-      directions = [
-        Offset(0, 1),
-        Offset(1, 1),
-        Offset(-1, 1),
-        Offset(1, 0),
-        Offset(-1, 0),
-      ];
-    } else if (degrees >= 112.5 && degrees < 157.5) {
-      // Southwest
-      directions = [
-        Offset(-1, 1),
-        Offset(-1, 0),
-        Offset(0, 1),
-        Offset(-1, -1),
-        Offset(1, 1),
-      ];
-    } else if (degrees >= 157.5 && degrees < 202.5) {
-      // West (trái)
-      directions = [
-        Offset(-1, 0),
-        Offset(-1, 1),
-        Offset(-1, -1),
-        Offset(0, 1),
-        Offset(0, -1),
-      ];
-    } else if (degrees >= 202.5 && degrees < 247.5) {
-      // Northwest
-      directions = [
-        Offset(-1, -1),
-        Offset(-1, 0),
-        Offset(0, -1),
-        Offset(-1, 1),
-        Offset(1, -1),
-      ];
-    } else if (degrees >= 247.5 && degrees < 292.5) {
-      // North (trên)
-      directions = [
-        Offset(0, -1),
-        Offset(-1, -1),
-        Offset(1, -1),
-        Offset(-1, 0),
-        Offset(1, 0),
-      ];
-    } else {
-      // Northeast
-      directions = [
-        Offset(1, -1),
-        Offset(1, 0),
-        Offset(0, -1),
-        Offset(1, 1),
-        Offset(-1, -1),
-      ];
-    }
-
-    return directions;
   }
 
   void _handleDragComplete(int blockIndex, Offset dragStart, Offset dragEnd) {
@@ -270,7 +197,7 @@ class _GameScreenState extends State<GameScreen> {
         _showMessage('Failed to place block!', isError: true);
       }
     } else {
-      _showMessage('✖ Drag block near the board!', isError: true);
+      _showMessage('✖ Drag block to the board!', isError: true);
     }
 
     _resetDragState();
@@ -467,7 +394,7 @@ class _GameScreenState extends State<GameScreen> {
       child: Column(
         children: [
           Text(
-            '👆 Tap & Drag to place blocks',
+            '👆 Drag blocks to the board',
             style: TextStyle(
               color: Colors.white.withOpacity(0.6),
               fontSize: 14,
